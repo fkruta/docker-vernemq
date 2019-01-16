@@ -94,6 +94,81 @@ If you started VerneMQ cluster inside Kubernetes using ```DOCKER_VERNEMQ_DISCOVE
 
 All ```vmq-admin``` commands are available. See https://vernemq.com/docs/administration/ for more information.
 
+### Automated clustering on Consul + Nomad
+
+When running VerneMQ inside Nomad, it is possible to leverage Consul service catalog, populated by Nomad, to make the VerneMQ containers cluster altogether automatically.
+
+Set ```DOCKER_VERNEMQ_DISCOVERY_CONSUL=1``` in your Job's environment.
+Make sure the `epmd` port (`4369`) is registered in a specific service, and set this service name into the `DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME` environment variable and has a health-check defined (so that each VerneMQ container is registered only when it is actually really listening on this port)
+
+Here are the important snippets from your Nomad job to run this container (this job is incomplete, only the autodiscovery settings are illustrated here):
+
+```hcl
+job "vernemq" {
+  type = "service"
+
+  group "mqtt" {
+    task "mqtt" {
+      driver = "docker"
+      config {
+        # Because of the autodiscovery, name and IP, we use host networking
+        # (we get the same kind of routing than clusterIP in Kubernetes)
+        network_mode = "host"
+
+        port_map {
+          epmd                = 4369
+        }
+      }
+
+      env {
+        "DOCKER_IP_ADDRESS"                  = "${attr.unique.network.ip-address}"
+        "DOCKER_VERNEMQ_NODENAME"            = "VerneMQ@${attr.unique.network.ip-address}"
+
+        # VerneMQ clustering (Consul+Nomad)
+        "DOCKER_VERNEMQ_DISCOVERY_CONSUL"              = "1"
+        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST"         = "${attr.unique.network.ip-address}"
+        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME" = "mqtt-discovery"
+        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND"  = "${NOMAD_ALLOC_INDEX}"
+      }
+
+      resources {
+        network {
+          port "epmd" {
+            static = 4369
+          }
+        }
+      }
+
+      service {
+        # This service is used only to expose the dynamic address of one of the MQTT broker
+        # To make it easy for the other ones to join
+        name = "mqtt-discovery"
+        port = "epmd"
+
+        check {
+          type     = "tcp"
+          port     = "epmd"
+          interval = "10s"
+          timeout  = "2s"
+          initial_status = "critical"
+        }
+      }
+    }
+  }
+}
+```
+
+The other useful env var for the autodiscovery are:
+
+- `DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST` the host where to make API calls to Consul service catalog
+- `DOCKER_VERNEMQ_DISCOVERY_CONSUL_PORT` let you customize Consul API port. Requests to the Consul API will be sent to port `8500` by default.
+- `DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND` is useful to add a time offset between the various allocations: the second one wait a little bit to make sure the first one ius ready to listen for joining nodes. Then node n+1 wait a little bit more than node n, and so on and so forth.
+
+Known limitations:
+
+- Consul TLS and ACLs are not yet handled
+- host network is not ideal, and we plan to improve that later
+
 ### VerneMQ Configuration
 
 All configuration parameters that are available in `vernemq.conf` can be defined

@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 
-IP_ADDRESS=$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
-IP_ADDRESS=${DOCKER_IP_ADDRESS:-${IP_ADDRESS}}
+mkdir -p tmp
+readonly LOG_FILE="./tmp/$(basename "$0").log"
+success() { echo -e "$(date +%T) \e[32;1m[SUCCESS]\e[0m $*" | tee -a "$LOG_FILE" >&2 ; }
+info()    { echo -e "$(date +%T) \e[34m[INFO]\e[0m    $*" | tee -a "$LOG_FILE" >&2 ; }
+warning() { echo -e "$(date +%T) \e[33m[WARNING]\e[0m $*" | tee -a "$LOG_FILE" >&2 ; }
+error()   { echo -e "$(date +%T) \e[31m[ERROR]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; }
+fatal()   { echo -e "$(date +%T) \e[101m[FATAL]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+
+readonly CONTAINER_IP_ADDRESS=$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
+IP_ADDRESS=${DOCKER_IP_ADDRESS:-${CONTAINER_IP_ADDRESS}}
+
 
 # Ensure the Erlang node name is set correctly
 if env | grep "DOCKER_VERNEMQ_NODENAME" -q; then
-    sed -i.bak -r "s/-name VerneMQ@.+/-name VerneMQ@${DOCKER_VERNEMQ_NODENAME}/" /vernemq/etc/vm.args
+    NODE_NAME_PART2=${DOCKER_VERNEMQ_NODENAME}
 else
-    sed -i.bak -r "s/-name VerneMQ@.+/-name VerneMQ@${IP_ADDRESS}/" /vernemq/etc/vm.args
+    NODE_NAME_PART2=${IP_ADDRESS}
 fi
 
+
 if env | grep "DOCKER_VERNEMQ_DISCOVERY_NODE" -q; then
-    sed -i.bak -r "/-eval.+/d" /vernemq/etc/vm.args 
+    sed -i.bak -r "/-eval.+/d" /vernemq/etc/vm.args
     echo "-eval \"vmq_server_cmd:node_join('VerneMQ@${DOCKER_VERNEMQ_DISCOVERY_NODE}')\"" >> /vernemq/etc/vm.args
 fi
 
@@ -33,7 +43,8 @@ if env | grep "DOCKER_VERNEMQ_DISCOVERY_KUBERNETES" -q; then
         VERNEMQ_KUBERNETES_HOSTNAME=${MY_POD_NAME}.${VERNEMQ_KUBERNETES_SUBDOMAIN}.${DOCKER_VERNEMQ_KUBERNETES_NAMESPACE}.svc.${DOCKER_VERNEMQ_KUBERNETES_CLUSTER_NAME}
     fi
 
-    sed -i.bak -r "s/VerneMQ@.+/VerneMQ@${VERNEMQ_KUBERNETES_HOSTNAME}/" /vernemq/etc/vm.args
+    NODE_NAME_PART2=${VERNEMQ_KUBERNETES_HOSTNAME}
+
     # Hack into K8S DNS resolution (temporarily)
     kube_pod_names=$(curl -X GET $insecure --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.$DOCKER_VERNEMQ_KUBERNETES_CLUSTER_NAME/api/v1/namespaces/$DOCKER_VERNEMQ_KUBERNETES_NAMESPACE/pods?labelSelector=app=$DOCKER_VERNEMQ_KUBERNETES_APP_LABEL -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq '.items[].spec.hostname' | sed 's/"//g' | tr '\n' ' ')
     for kube_pod_name in $kube_pod_names;
@@ -53,14 +64,45 @@ if env | grep "DOCKER_VERNEMQ_DISCOVERY_KUBERNETES" -q; then
     done
 fi
 
+# Consul-based node discovery
+if env | grep "DOCKER_VERNEMQ_DISCOVERY_CONSUL" -q; then
+    # Ask Consul for services
+    readonly CONSUL_HOST=${DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST:-consul.service.consul}
+    readonly CONSUL_PORT=${DOCKER_VERNEMQ_DISCOVERY_CONSUL_PORT:-8500}
+    readonly SVC_NAME=${DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME:-vernemq}
+
+    NODE_NAME_PART2=${IP_ADDRESS}
+
+    # Because all tasks start in parallel the first time (Nomad only do rolling update for updates)
+    # We'll wait for some delay here (0 for the first alloc, then 15*n for the next allocs)
+    info "Waiting for $((15 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0})) seconds before starting the discovery"
+    sleep $((15 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0}))
+
+    consul_vernemq_services_ip=$(curl -s -X GET http://${CONSUL_HOST}:${CONSUL_PORT}/v1/catalog/service/${SVC_NAME} | jq -r '.[] | .ServiceAddress' | tr '\n' ' ')
+    for service_addr in $consul_vernemq_services_ip; do
+        info "Will join an existing cluster with discovery node at ${service_addr}"
+        echo "-eval \"vmq_server_cmd:node_join('VerneMQ@${service_addr}')\"" >> /vernemq/etc/vm.args
+        break
+    done
+fi
+
+info "Setting nodename to VerneMQ@${NODE_NAME_PART2}"
+sed -i.bak -r "s/-name VerneMQ@.+/-name VerneMQ@${NODE_NAME_PART2}/" /vernemq/etc/vm.args
+
+info "Setting distributed cookie value"
+sed -i.bak -r "s/-setcookie .+/-setcookie ${DOCKER_VERNEMQ_DISTRIBUTED_COOKIE:-vmq}/" /vernemq/etc/vm.args
+
 if [ -f /vernemq/etc/vernemq.conf.local ]; then
+    info "Finish config using /vernemq/etc/vernemq.conf.local"
     cp /vernemq/etc/vernemq.conf.local /vernemq/etc/vernemq.conf
 else
-    sed -i '/########## Start ##########/,/########## End ##########/d' /vernemq/etc/vernemq.conf
+    info "Finish config using Docker env vars"
+    cat <<EOF >> /vernemq/etc/vernemq.conf
+########## Config from start_vernemq at $(date +"%F %T") ##########
+# From Docker env vars
+EOF
 
-    echo "########## Start ##########" >> /vernemq/etc/vernemq.conf
-
-    env | grep DOCKER_VERNEMQ | grep -v 'DISCOVERY_NODE\|KUBERNETES\|DOCKER_VERNEMQ_USER' | cut -c 16- | awk '{match($0,/^[A-Z0-9_]*/)}{print tolower(substr($0,RSTART,RLENGTH)) substr($0,RLENGTH+1)}' | sed 's/__/./g' >> /vernemq/etc/vernemq.conf
+    env | grep DOCKER_VERNEMQ | grep -v 'DISCOVERY_NODE\|DISTRIBUTED_COOKIE\|KUBERNETES\|CONSUL\|DOCKER_VERNEMQ_USER' | cut -c 16- | awk '{match($0,/^[A-Z0-9_]*/)}{print tolower(substr($0,RSTART,RLENGTH)) substr($0,RLENGTH+1)}' | sed 's/__/./g' >> /vernemq/etc/vernemq.conf
 
     users_are_set=$(env | grep DOCKER_VERNEMQ_USER)
     if [ ! -z "$users_are_set" ]; then
@@ -77,21 +119,20 @@ $password
 EOF
     done
 
-    echo "erlang.distribution.port_range.minimum = 9100" >> /vernemq/etc/vernemq.conf
-    echo "erlang.distribution.port_range.maximum = 9109" >> /vernemq/etc/vernemq.conf
-    echo "listener.tcp.default = ${IP_ADDRESS}:1883" >> /vernemq/etc/vernemq.conf
-    echo "listener.ws.default = ${IP_ADDRESS}:8080" >> /vernemq/etc/vernemq.conf
-    echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >> /vernemq/etc/vernemq.conf
-    echo "listener.http.metrics = ${IP_ADDRESS}:8888" >> /vernemq/etc/vernemq.conf
+    cat <<EOF >> /vernemq/etc/vernemq.conf
+# Set in startup script
+erlang.distribution.port_range.minimum = 9100
+erlang.distribution.port_range.maximum = 9109
+########## End ##########
+EOF
 
-    echo "########## End ##########" >> /vernemq/etc/vernemq.conf
 fi
 
 # Check configuration file
 /vernemq/bin/vernemq config generate 2>&1 > /dev/null | tee /tmp/config.out | grep error
 
 if [ $? -ne 1 ]; then
-    echo "configuration error, exit"
+    error "configuration error, exit"
     echo "$(cat /tmp/config.out)"
     exit $?
 fi
@@ -100,14 +141,14 @@ pid=0
 
 # SIGUSR1-handler
 siguser1_handler() {
-    echo "stopped"
+    info "stopped"
 }
 
 # SIGTERM-handler
 sigterm_handler() {
     if [ $pid -ne 0 ]; then
         # this will stop the VerneMQ process
-        /vernemq/bin/vmq-admin cluster leave node=VerneMQ@$IP_ADDRESS -k > /dev/null
+        /vernemq/bin/vmq-admin cluster leave node=VerneMQ@NODE_NAME_PART2 -k > /dev/null
         wait "$pid"
     fi
     exit 143; # 128 + 15 -- SIGTERM
@@ -121,3 +162,5 @@ trap 'sigterm_handler' SIGTERM
 /vernemq/bin/vernemq console -noshell -noinput $@
 pid=$(ps aux | grep '[b]eam.smp' | awk '{print $2}')
 wait $pid
+
+EOSH
