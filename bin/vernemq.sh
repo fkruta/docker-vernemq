@@ -80,9 +80,14 @@ if env | grep "DOCKER_VERNEMQ_DISCOVERY_CONSUL" -q; then
 
     consul_vernemq_services_ip=$(curl -s -X GET http://${CONSUL_HOST}:${CONSUL_PORT}/v1/catalog/service/${SVC_NAME} | jq -r '.[] | .ServiceAddress' | tr '\n' ' ')
     for service_addr in $consul_vernemq_services_ip; do
-        info "Will join an existing cluster with discovery node at ${service_addr}"
-        echo "-eval \"vmq_server_cmd:node_join('VerneMQ@${service_addr}')\"" >> /vernemq/etc/vm.args
-        break
+        info "MQTT services found at ${service_addr}"
+    done
+    for service_addr in $consul_vernemq_services_ip; do
+        if [[ "${service_addr}" != "${NODE_NAME_PART2}" ]]; then
+            info "Will join an existing cluster with discovery node at ${service_addr}"
+            echo "-eval \"vmq_server_cmd:node_join('VerneMQ@${service_addr}')\"" >> /vernemq/etc/vm.args
+            break
+        fi
     done
 fi
 
@@ -162,5 +167,3 @@ trap 'sigterm_handler' SIGTERM
 /vernemq/bin/vernemq console -noshell -noinput $@
 pid=$(ps aux | grep '[b]eam.smp' | awk '{print $2}')
 wait $pid
-
-EOSH
