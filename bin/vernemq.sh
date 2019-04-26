@@ -8,7 +8,7 @@ warning() { echo -e "$(date +%T) \e[33m[WARNING]\e[0m $*" | tee -a "$LOG_FILE" >
 error()   { echo -e "$(date +%T) \e[31m[ERROR]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; }
 fatal()   { echo -e "$(date +%T) \e[101m[FATAL]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
-readonly CONTAINER_IP_ADDRESS==$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
+readonly CONTAINER_IP_ADDRESS=$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
 IP_ADDRESS=${DOCKER_IP_ADDRESS:-${CONTAINER_IP_ADDRESS}}
 
 
