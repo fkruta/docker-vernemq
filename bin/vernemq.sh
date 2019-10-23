@@ -16,13 +16,34 @@ IP_ADDRESS=${DOCKER_IP_ADDRESS:-${CONTAINER_IP_ADDRESS}}
 if env | grep "DOCKER_VERNEMQ_NODENAME" -q; then
     NODE_NAME_PART2=${DOCKER_VERNEMQ_NODENAME}
 else
-    NODE_NAME_PART2=${IP_ADDRESS}
+    if [ -n "$DOCKER_VERNEMQ_SWARM" ]; then
+        NODE_NAME_PART2=$(hostname -i)
+    else
+        NODE_NAME_PART2=${IP_ADDRESS}
+    fi
 fi
 
 
 if env | grep "DOCKER_VERNEMQ_DISCOVERY_NODE" -q; then
+    discovery_node=$DOCKER_VERNEMQ_DISCOVERY_NODE
+    if [ -n "$DOCKER_VERNEMQ_SWARM" ]; then
+        tmp=''
+        while [[ -z "$tmp" ]]; do
+            tmp=$(getent hosts tasks.$discovery_node | awk '{print $1}' | head -n 1)
+            sleep 1
+        done
+        discovery_node=$tmp
+    fi
+    if [ -n "$DOCKER_VERNEMQ_COMPOSE" ]; then
+        tmp=''
+        while [[ -z "$tmp" ]]; do
+            tmp=$(getent hosts $discovery_node | awk '{print $1}' | head -n 1)
+            sleep 1
+        done
+        discovery_node=$tmp
+    fi
     sed -i.bak -r "/-eval.+/d" /vernemq/etc/vm.args
-    echo "-eval \"vmq_server_cmd:node_join('VerneMQ@${DOCKER_VERNEMQ_DISCOVERY_NODE}')\"" >> /vernemq/etc/vm.args
+    echo "-eval \"vmq_server_cmd:node_join('VerneMQ@$discovery_node')\"" >> /vernemq/etc/vm.args
 fi
 
 # If you encounter "SSL certification error (subject name does not match the host name)", you may try to set DOCKER_VERNEMQ_KUBERNETES_INSECURE to "1".
@@ -36,7 +57,7 @@ if env | grep "DOCKER_VERNEMQ_DISCOVERY_KUBERNETES" -q; then
     # Let's get the namespace if it isn't set
     DOCKER_VERNEMQ_KUBERNETES_NAMESPACE=${DOCKER_VERNEMQ_KUBERNETES_NAMESPACE:-`cat /var/run/secrets/kubernetes.io/serviceaccount/namespace`}
     # Let's set our nodename correctly
-    VERNEMQ_KUBERNETES_SUBDOMAIN=$(curl -X GET $insecure --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.$DOCKER_VERNEMQ_KUBERNETES_CLUSTER_NAME/api/v1/namespaces/$DOCKER_VERNEMQ_KUBERNETES_NAMESPACE/pods?labelSelector=$DOCKER_VERNEMQ_KUBERNETES_LABEL_SELECTOR -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq '.items[0].spec.subdomain' | sed 's/"//g' | tr '\n' '\0')
+    VERNEMQ_KUBERNETES_SUBDOMAIN=${DOCKER_VERNEMQ_KUBERNETES_SUBDOMAIN:-$(curl -X GET $insecure --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.$DOCKER_VERNEMQ_KUBERNETES_CLUSTER_NAME/api/v1/namespaces/$DOCKER_VERNEMQ_KUBERNETES_NAMESPACE/pods?labelSelector=$DOCKER_VERNEMQ_KUBERNETES_LABEL_SELECTOR -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" | jq '.items[0].spec.subdomain' | sed 's/"//g' | tr '\n' '\0')}
     if [ $VERNEMQ_KUBERNETES_SUBDOMAIN == "null" ]; then
         VERNEMQ_KUBERNETES_HOSTNAME=${MY_POD_NAME}.${DOCKER_VERNEMQ_KUBERNETES_NAMESPACE}.svc.${DOCKER_VERNEMQ_KUBERNETES_CLUSTER_NAME}
     else
@@ -100,6 +121,7 @@ sed -i.bak -r "s/-setcookie .+/-setcookie ${DOCKER_VERNEMQ_DISTRIBUTED_COOKIE:-v
 if [ -f /vernemq/etc/vernemq.conf.local ]; then
     info "Finish config using /vernemq/etc/vernemq.conf.local"
     cp /vernemq/etc/vernemq.conf.local /vernemq/etc/vernemq.conf
+    sed -i -r "s/###IPADDRESS###/${IP_ADDRESS}/" /vernemq/etc/vernemq.conf
 else
     info "Finish config using Docker env vars"
     cat <<EOF >> /vernemq/etc/vernemq.conf
@@ -107,7 +129,7 @@ else
 # From Docker env vars
 EOF
 
-    env | grep DOCKER_VERNEMQ | grep -v 'DISCOVERY_NODE\|DISTRIBUTED_COOKIE\|KUBERNETES\|CONSUL\|DOCKER_VERNEMQ_USER' | cut -c 16- | awk '{match($0,/^[A-Z0-9_]*/)}{print tolower(substr($0,RSTART,RLENGTH)) substr($0,RLENGTH+1)}' | sed 's/__/./g' >> /vernemq/etc/vernemq.conf
+    env | grep DOCKER_VERNEMQ | grep -v 'DISCOVERY_NODE\|DISTRIBUTED_COOKIE\|KUBERNETES\|SWARM\|COMPOSE\|CONSUL\|DOCKER_VERNEMQ_USER' | cut -c 16- | awk '{match($0,/^[A-Z0-9_]*/)}{print tolower(substr($0,RSTART,RLENGTH)) substr($0,RLENGTH+1)}' | sed 's/__/./g' >> /vernemq/etc/vernemq.conf
 
     users_are_set=$(env | grep DOCKER_VERNEMQ_USER)
     if [ ! -z "$users_are_set" ]; then
