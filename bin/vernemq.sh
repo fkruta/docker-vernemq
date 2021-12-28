@@ -152,11 +152,11 @@ EOF
     done
 
     if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MINIMUM" ]; then
-        #echo "erlang.distribution.port_range.minimum = 9100" >>/vernemq/etc/vernemq.conf
+        echo "erlang.distribution.port_range.minimum = 9100" >>/vernemq/etc/vernemq.conf
     fi
 
     if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MAXIMUM" ]; then
-        #echo "erlang.distribution.port_range.maximum = 9109" >>/vernemq/etc/vernemq.conf
+        echo "erlang.distribution.port_range.maximum = 9109" >>/vernemq/etc/vernemq.conf
     fi
 
     if [ -z "$DOCKER_VERNEMQ_LISTENER__TCP__DEFAULT" ]; then
@@ -168,7 +168,7 @@ EOF
     fi
 
     if [ -z "$DOCKER_VERNEMQ_LISTENER__VMQ__CLUSTERING" ]; then
-        #echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >>/vernemq/etc/vernemq.conf
+        echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >>/vernemq/etc/vernemq.conf
     fi
 
     if [ -z "$DOCKER_VERNEMQ_LISTENER__HTTP__METRICS" ]; then
