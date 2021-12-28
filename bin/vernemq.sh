@@ -101,8 +101,8 @@ if env | grep "DOCKER_VERNEMQ_DISCOVERY_CONSUL" -q; then
 
     # Because all tasks start in parallel the first time (Nomad only do rolling update for updates)
     # We'll wait for some delay here (0 for the first alloc, then 15*n for the next allocs)
-    info "Waiting for $((15 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0})) seconds before starting the discovery"
-    sleep $((15 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0}))
+    info "Waiting for $((20 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0})) seconds before starting the discovery"
+    sleep $((20 * ${DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND:-0}))
 
     consul_vernemq_services_ip=$(curl -s -X GET http://${CONSUL_HOST}:${CONSUL_PORT}/v1/catalog/service/${SVC_NAME} | jq -r '.[] | .ServiceAddress' | tr '\n' ' ')
     for service_addr in $consul_vernemq_services_ip; do
@@ -151,13 +151,13 @@ $password
 EOF
     done
 
-    if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MINIMUM" ]; then
-        echo "erlang.distribution.port_range.minimum = 9100" >>/vernemq/etc/vernemq.conf
-    fi
+    #if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MINIMUM" ]; then
+        #echo "erlang.distribution.port_range.minimum = 9100" >>/vernemq/etc/vernemq.conf
+    #fi
 
-    if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MAXIMUM" ]; then
-        echo "erlang.distribution.port_range.maximum = 9109" >>/vernemq/etc/vernemq.conf
-    fi
+    #if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MAXIMUM" ]; then
+        #echo "erlang.distribution.port_range.maximum = 9109" >>/vernemq/etc/vernemq.conf
+    #fi
 
     if [ -z "$DOCKER_VERNEMQ_LISTENER__TCP__DEFAULT" ]; then
         echo "listener.tcp.default = ${IP_ADDRESS}:1883" >>/vernemq/etc/vernemq.conf
@@ -167,9 +167,9 @@ EOF
         echo "listener.ws.default = ${IP_ADDRESS}:8080" >>/vernemq/etc/vernemq.conf
     fi
 
-    if [ -z "$DOCKER_VERNEMQ_LISTENER__VMQ__CLUSTERING" ]; then
-        echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >>/vernemq/etc/vernemq.conf
-    fi
+    #if [ -z "$DOCKER_VERNEMQ_LISTENER__VMQ__CLUSTERING" ]; then
+        #echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >>/vernemq/etc/vernemq.conf
+    #fi
 
     if [ -z "$DOCKER_VERNEMQ_LISTENER__HTTP__METRICS" ]; then
         echo "listener.http.metrics = ${IP_ADDRESS}:8888" >>/vernemq/etc/vernemq.conf
