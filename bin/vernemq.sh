@@ -8,8 +8,13 @@ warning() { echo -e "$(date +%T) \e[33m[WARNING]\e[0m $*" | tee -a "$LOG_FILE" >
 error()   { echo -e "$(date +%T) \e[31m[ERROR]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; }
 fatal()   { echo -e "$(date +%T) \e[101m[FATAL]\e[0m   $*" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
-readonly CONTAINER_IP_ADDRESS=$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
-IP_ADDRESS=${DOCKER_IP_ADDRESS:-${CONTAINER_IP_ADDRESS}}
+#readonly CONTAINER_IP_ADDRESS=$(ip -4 addr show ${DOCKER_NET_INTERFACE:-eth0} | grep -oE '[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
+#IP_ADDRESS=${DOCKER_IP_ADDRESS:-${CONTAINER_IP_ADDRESS}}
+NET_INTERFACE=$(route | grep '^default' | grep -o '[^ ]*$')
+NET_INTERFACE=${DOCKER_NET_INTERFACE:-${NET_INTERFACE}}
+IP_ADDRESS=$(ip -4 addr show ${NET_INTERFACE} | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sed -e "s/^[[:space:]]*//" | head -n 1)
+IP_ADDRESS=${DOCKER_IP_ADDRESS:-${IP_ADDRESS}}
+
 
 
 # Ensure the Erlang node name is set correctly
@@ -145,6 +150,30 @@ $password
 $password
 EOF
     done
+
+    if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MINIMUM" ]; then
+        echo "erlang.distribution.port_range.minimum = 9100" >>/vernemq/etc/vernemq.conf
+    fi
+
+    if [ -z "$DOCKER_VERNEMQ_ERLANG__DISTRIBUTION__PORT_RANGE__MAXIMUM" ]; then
+        echo "erlang.distribution.port_range.maximum = 9109" >>/vernemq/etc/vernemq.conf
+    fi
+
+    if [ -z "$DOCKER_VERNEMQ_LISTENER__TCP__DEFAULT" ]; then
+        echo "listener.tcp.default = ${IP_ADDRESS}:1883" >>/vernemq/etc/vernemq.conf
+    fi
+
+    if [ -z "$DOCKER_VERNEMQ_LISTENER__WS__DEFAULT" ]; then
+        echo "listener.ws.default = ${IP_ADDRESS}:8080" >>/vernemq/etc/vernemq.conf
+    fi
+
+    if [ -z "$DOCKER_VERNEMQ_LISTENER__VMQ__CLUSTERING" ]; then
+        echo "listener.vmq.clustering = ${IP_ADDRESS}:44053" >>/vernemq/etc/vernemq.conf
+    fi
+
+    if [ -z "$DOCKER_VERNEMQ_LISTENER__HTTP__METRICS" ]; then
+        echo "listener.http.metrics = ${IP_ADDRESS}:8888" >>/vernemq/etc/vernemq.conf
+    fi   
 
     cat <<EOF >> /vernemq/etc/vernemq.conf
 # Set in startup script

@@ -22,11 +22,6 @@ ENV DOCKER_VERNEMQ_DISCOVERY_CONSUL=0 \
     DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME=vernemq \
     DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST=consul.service.consul \
     DOCKER_VERNEMQ_DISCOVERY_CONSUL_PORT=8500
-
-
-ENV DOCKER_VERNEMQ_KUBERNETES_LABEL_SELECTOR="app=vernemq" \
-    DOCKER_VERNEMQ_LOG__CONSOLE=console \
-    PATH="/vernemq/bin:$PATH" \
     
 COPY --chown=10000:10000 bin/vernemq.sh /usr/sbin/start_vernemq
 COPY --chown=10000:10000 files/vm.args /vernemq/etc/vm.args
