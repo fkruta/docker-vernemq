@@ -12,7 +12,15 @@ VerneMQ is an Apache2 licensed distributed MQTT broker, developed in Erlang.
 
 ## How to use this image
 
-### 1. Using [Helm](https://helm.sh/) to deploy on [Kubernetes](https://kubernetes.io/)
+### 1. Building the image (tested)
+
+`docker build -t fkruta/vernemq .`
+
+Then pushing it to docker.io hub for instance
+
+`docker push fkruta/vernemq`
+
+### 2. Using [Helm](https://helm.sh/) to deploy on [Kubernetes](https://kubernetes.io/) (not tested)
 
 First install and configure Helm according to the [documentation](https://helm.sh/docs/using_helm/#quickstart-guide). Then add VerneMQ Helm charts repository:
 
@@ -24,27 +32,27 @@ You can now deploy VerneMQ on your Kubernetes cluster:
 
 For more information, check out the Helm chart [README](helm/vernemq/README.md).
 
-### 2. Using pure Docker commands
+### 3. Using pure Docker commands (tested)
 
-    docker run --name vernemq1 -d erlio/docker-vernemq
+    docker run --name vernemq1 -d fkruta/docker-vernemq
 
 Somtimes you need to configure a forwarding for ports (on a Mac for example):
 
-    docker run -p 1883:1883 --name vernemq1 -d erlio/docker-vernemq
+    docker run -p 1883:1883 --name vernemq1 -d fkruta/docker-vernemq
 
-This starts a new node that listens on 1883 for MQTT connections and on 8080 for MQTT over websocket connections. However, at this moment the broker won't be able to authenticate the connecting clients. To allow anonymous clients use the ```DOCKER_VERNEMQ_ALLOW_ANONYMOUS=on``` environment variable.
+This starts a new node that listens on 1883 for MQTT connections and on 8080 for MQTT over websocket connections. However, at this moment the broker won't be able to authenticate the connecting clients. To allow anonymous clients use the ```DOCKER_VERNEMQ_ALLOW_ANONYMOUS=on``` environment variable. Note this has been set-up by default in this version. 
 
-    docker run -e "DOCKER_VERNEMQ_ALLOW_ANONYMOUS=on" --name vernemq1 -d erlio/docker-vernemq
+    docker run -e "DOCKER_VERNEMQ_ALLOW_ANONYMOUS=on" --name vernemq1 -d fkruta/docker-vernemq
 
 #### Autojoining a VerneMQ cluster
 
 This allows a newly started container to automatically join a VerneMQ cluster. Assuming you started your first node like the example above you could autojoin the cluster (which currently consists of a single container 'vernemq1') like the following:
 
-    docker run -e "DOCKER_VERNEMQ_DISCOVERY_NODE=<IP-OF-VERNEMQ1>" --name vernemq2 -d erlio/docker-vernemq
+    docker run -e "DOCKER_VERNEMQ_DISCOVERY_NODE=<IP-OF-VERNEMQ1>" --name vernemq2 -d fkruta/docker-vernemq
 
 (Note, you can find the IP of a docker container using `docker inspect <containername/cid> | grep \"IPAddress\"`).
 
-### 3. Automated clustering on Kubernetes without helm
+### 3. Automated clustering on Kubernetes without helm (not tested)
 
 When running VerneMQ inside Kubernetes, it is possible to cause pods matching a specific label to cluster altogether automatically.
 This feature uses Kubernetes' API to discover other peers, and relies on the [default pod service account](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/) which has to be enabled.
@@ -83,7 +91,7 @@ When enabling Kubernetes autoclustering, don't set ```DOCKER_VERNEMQ_DISCOVERY_N
 > ```
 If using an vernemq.conf.local file, you can insert a placeholder (`###IPADDRESS###`) in your config to be replaced (at POD creation time) with the actual IP address of the POD vernemq is running on, making VMQ clustering possible.
 
-### 4. Using [Docker Swarm](https://docs.docker.com/engine/swarm/)
+### 4. Using [Docker Swarm](https://docs.docker.com/engine/swarm/) (not tested)
 
 Please follow the official Docker guide to properly setup Swarm cluster with one or more nodes.
 
@@ -92,7 +100,7 @@ Once Swarm is setup you can deploy a VerneMQ stack. The following snippet descri
     version: "3.7"
     services:
       vmq0:
-        image: erlio/docker-vernemq
+        image: fkruta/docker-vernemq
         environment:
           DOCKER_VERNEMQ_SWARM: 1
       vmq:
@@ -133,25 +141,40 @@ If you started VerneMQ cluster inside Kubernetes using ```DOCKER_VERNEMQ_DISCOVE
 
 All ```vmq-admin``` commands are available. See https://vernemq.com/docs/administration/ for more information.
 
-### Automated clustering on Consul + Nomad
+### Automated clustering on Consul + Nomad (tested)
 
 When running VerneMQ inside Nomad, it is possible to leverage Consul service catalog, populated by Nomad, to make the VerneMQ containers cluster altogether automatically.
 
 Set ```DOCKER_VERNEMQ_DISCOVERY_CONSUL=1``` in your Job's environment.
 Make sure the `epmd` port (`4369`) is registered in a specific service, and set this service name into the `DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME` environment variable and has a health-check defined (so that each VerneMQ container is registered only when it is actually really listening on this port)
 
-Here are the important snippets from your Nomad job to run this container (this job is incomplete, only the autodiscovery settings are illustrated here):
+Here are the important snippets from your Nomad job to run this container (this job runs but could be further optimized most of the autodiscovery settings are illustrated here):
 
 ```hcl
 job "vernemq" {
+  datacenters = ["dc1"]
   type = "service"
 
+  constraint {
+    distinct_hosts = true
+    }
+
   group "mqtt" {
+    count = 3
+    network {
+
+        port "mqttp" {
+        static = 1883
+      }
+    }
+
     task "mqtt" {
+
       driver = "docker"
       config {
         # Because of the autodiscovery, name and IP, we use host networking
         # (we get the same kind of routing than clusterIP in Kubernetes)
+        image        = "fkruta/vernemq:latest"
         network_mode = "host"
 
         port_map {
@@ -160,14 +183,16 @@ job "vernemq" {
       }
 
       env {
-        "DOCKER_IP_ADDRESS"                  = "${attr.unique.network.ip-address}"
-        "DOCKER_VERNEMQ_NODENAME"            = "VerneMQ@${attr.unique.network.ip-address}"
-
+        DOCKER_IP_ADDRESS                  = "${attr.unique.network.ip-address}"
+        DOCKER_VERNEMQ_NODENAME            = "VerneMQ@${attr.unique.network.ip-address}"
+        # DOCKER_VERNEMQ_ACCEPT_EULA         = "yes"
+        # DOCKER_VERNEMQ_ALLOW_ANONYMOUS     = "on" 
+        
         # VerneMQ clustering (Consul+Nomad)
-        "DOCKER_VERNEMQ_DISCOVERY_CONSUL"              = "1"
-        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST"         = "${attr.unique.network.ip-address}"
-        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME" = "mqtt-discovery"
-        "DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND"  = "${NOMAD_ALLOC_INDEX}"
+        DOCKER_VERNEMQ_DISCOVERY_CONSUL              = "1"
+        DOCKER_VERNEMQ_DISCOVERY_CONSUL_HOST         = "${attr.unique.network.ip-address}"
+        DOCKER_VERNEMQ_DISCOVERY_CONSUL_SERVICE_NAME = "mqtt-discovery"
+        DOCKER_VERNEMQ_DISCOVERY_CONSUL_STAGGER_IND  = "${NOMAD_ALLOC_INDEX}"
       }
 
       resources {
@@ -176,6 +201,8 @@ job "vernemq" {
             static = 4369
           }
         }
+        cpu    = 1500
+        memory = 1024
       }
 
       service {
